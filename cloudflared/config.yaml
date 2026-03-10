@@ -1,6 +1,6 @@
 ---
 name: Cloudflared Caddy
-version: 7.0.3-caddy.2
+version: 7.0.4-caddy.2
 breaking_versions:
   - 5.3.7
   - 6.0.0
