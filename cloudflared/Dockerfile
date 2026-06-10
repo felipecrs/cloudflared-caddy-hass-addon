@@ -1,4 +1,4 @@
-FROM ghcr.io/hassio-addons/base:20.1.1
+FROM ghcr.io/hassio-addons/base:20.2.0
 
 # Set S6 verbosity level
 ENV S6_VERBOSITY="1"
@@ -11,7 +11,7 @@ ARG BUILD_ARCH="amd64"
 # renovate: datasource=repology depName=yq packageName=alpine_3_22/yq-go versioning=loose
 ARG YQ_VERSION="4.49.2-r6"
 # renovate: datasource=github-releases depName=cloudflared packageName=cloudflare/cloudflared versioning=loose
-ARG CLOUDFLARED_VERSION="2026.5.2"
+ARG CLOUDFLARED_VERSION="2026.6.0"
 
 # renovate: datasource=github-releases depName=caddy packageName=caddyserver/caddy
 ARG CADDY_VERSION="2.11.4"
