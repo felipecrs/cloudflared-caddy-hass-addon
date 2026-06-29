@@ -24,5 +24,7 @@
       }
     }
   },
+  "workspaceFolder": "/mnt/supervisor/addons/local/${localWorkspaceFolderBasename}",
+  "workspaceMount": "source=${localWorkspaceFolder},target=${containerWorkspaceFolder},type=bind,consistency=cached",
   "mounts": ["type=volume,target=/var/lib/docker"]
 }
