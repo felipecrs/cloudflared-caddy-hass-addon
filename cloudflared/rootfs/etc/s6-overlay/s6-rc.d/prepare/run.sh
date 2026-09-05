@@ -1,18 +1,41 @@
 #!/command/with-contenv bashio
 # shellcheck shell=bash
 # ==============================================================================
-# Home Assistant App (Add-on): Cloudflared
+# Home Assistant App: Cloudflared
 #
 # Configures the Cloudflare Tunnel and creates the needed DNS entry under the
 # given hostname(s)
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
+# Helper: Executes a command with exponential backoff retry logic
+# ------------------------------------------------------------------------------
+runWithRetry() {
+    local max_retries="${1:-4}"
+    local retry_delay="${2:-2}"
+    local description="$3"
+    shift 3
+
+    local attempt=1
+    while [ $attempt -le "$max_retries" ]; do
+        if "$@"; then
+            return 0
+        fi
+        bashio::log.warning "Failed to ${description} (Attempt ${attempt}/${max_retries}). Retrying in ${retry_delay}s..."
+        sleep "$retry_delay"
+        attempt=$((attempt + 1))
+        retry_delay=$((retry_delay * 2))
+    done
+
+    return 1
+}
+
+# ------------------------------------------------------------------------------
 # Validates configuration and sets global variables used in the script
 # ------------------------------------------------------------------------------
 validateConfigAndSetVars() {
     bashio::log.trace "${FUNCNAME[0]}"
-    bashio::log.info "Validating app (add-on) configuration..."
+    bashio::log.info "Validating app configuration..."
 
     local validHostnameRegex="^(([a-z0-9äöüß]|[a-z0-9äöüß][a-z0-9äöüß\-]*[a-z0-9äöüß])\.)*([a-z0-9]|[a-z0-9][a-z0-9\-]*[a-z0-9])$"
 
@@ -23,7 +46,7 @@ validateConfigAndSetVars() {
             bashio::config.is_empty 'catch_all_service' &&
             bashio::config.is_empty 'nginx_proxy_manager'
     then
-        bashio::exit.nok "Cannot run without tunnel_token, external_hostname, additional_hosts, catch_all_service or nginx_proxy_manager. Please set at least one of these app (add-on) options."
+        bashio::exit.nok "Cannot run without tunnel_token, external_hostname, additional_hosts, catch_all_service or nginx_proxy_manager. Please set at least one of these app options."
     fi
 
     # Set and validate 'external_hostname'
@@ -47,7 +70,7 @@ validateConfigAndSetVars() {
 
     # Set and validate 'additional_hosts'
     if bashio::config.has_value 'additional_hosts'; then
-        additional_hosts=$(bashio::jq "$(bashio::addon.config)" ".additional_hosts[]")
+        additional_hosts=$(bashio::jq "$(bashio::app.config)" ".additional_hosts[]")
         readarray -t additional_hosts <<<"${additional_hosts}"
 
         local additional_host
@@ -90,8 +113,8 @@ validateConfigAndSetVars() {
     data_path="/data"
 
     bashio::log.debug "Checking Home Assistant port and if SSL is used..."
-    local ha_config_file="/homeassistant/configuration.yaml"
-    local ha_storage_http="/homeassistant/.storage/http"
+    local ha_config_file="${HOMEASSISTANT_CONFIG_FILE:-/homeassistant/configuration.yaml}"
+    local ha_storage_http="${HOMEASSISTANT_STORAGE_HTTP:-/homeassistant/.storage/http}"
     local ha_port="8123"
     local ha_ssl="false"
 
@@ -102,17 +125,53 @@ validateConfigAndSetVars() {
         local ha_ssl_from_storage=""
 
         if [[ -f "${ha_storage_http}" ]]; then
-            ha_port_from_storage=$(yq '.data.stable.server_port' "${ha_storage_http}" 2>/dev/null || true)
-            ha_ssl_from_storage=$(yq '.data.stable | (has("ssl_certificate") and has("ssl_key"))' "${ha_storage_http}" 2>/dev/null || true)
+            local storage_base=".data"
+            local storage_version=""
+            storage_version=$(yq '.version' "${ha_storage_http}" 2>/dev/null || true)
+            case "${storage_version}" in
+                1)
+                    storage_base=".data"
+                    ;;
+                2)
+                    storage_base=".data.stable"
+                    ;;
+                *)
+                    bashio::log.warning "Unknown Home Assistant storage version '${storage_version}' in ${ha_storage_http}, falling back to version 2 behavior"
+                    storage_base=".data.stable"
+                    ;;
+            esac
+
+            ha_port_from_storage=$(yq "${storage_base}.server_port" "${ha_storage_http}" 2>/dev/null || true)
+            local ha_ssl_cert_from_storage=""
+            local ha_ssl_key_from_storage=""
+            local storage_is_map=""
+            storage_is_map=$(yq "${storage_base} | select(type == \"!!map\")" "${ha_storage_http}" 2>/dev/null || true)
+
+            if [[ -n "${storage_is_map}" ]]; then
+                ha_ssl_cert_from_storage=$(yq "${storage_base}.ssl_certificate" "${ha_storage_http}" 2>/dev/null || true)
+                ha_ssl_key_from_storage=$(yq "${storage_base}.ssl_key" "${ha_storage_http}" 2>/dev/null || true)
+
+                if [[ -n "${ha_ssl_cert_from_storage}" || -n "${ha_ssl_key_from_storage}" ]]; then
+                    if [[ "${ha_ssl_cert_from_storage}" != "null" && -n "${ha_ssl_cert_from_storage}" ]] && \
+                        [[ "${ha_ssl_key_from_storage}" != "null" && -n "${ha_ssl_key_from_storage}" ]]; then
+                        ha_ssl_from_storage="true"
+                        bashio::log.debug "Read Home Assistant SSL from ${ha_storage_http}: ${ha_ssl_from_storage}"
+                    else
+                        ha_ssl_from_storage="false"
+                        bashio::log.debug "Read Home Assistant SSL from ${ha_storage_http}: ${ha_ssl_from_storage}"
+                    fi
+                fi
+            fi
 
             if [[ -n "${ha_port_from_storage}" && "${ha_port_from_storage}" != "null" ]]; then
                 ha_port="${ha_port_from_storage}"
                 bashio::log.debug "Read Home Assistant port from ${ha_storage_http}: ${ha_port}"
             fi
 
-            if [[ -n "${ha_ssl_from_storage}" && "${ha_ssl_from_storage}" != "null" ]]; then
-                ha_ssl="${ha_ssl_from_storage}"
-                bashio::log.debug "Read Home Assistant SSL from ${ha_storage_http}: ${ha_ssl}"
+            if [[ "${ha_ssl_from_storage}" == "true" ]]; then
+                ha_ssl="true"
+            elif [[ "${ha_ssl_from_storage}" == "false" ]]; then
+                ha_ssl="false"
             fi
         fi
 
@@ -237,6 +296,12 @@ createCertificate() {
 # ------------------------------------------------------------------------------
 # Check if Cloudflare Tunnel is existing
 # ------------------------------------------------------------------------------
+_get_tunnel_name() {
+    set -o pipefail
+    cloudflared --origincert="${data_path}/cert.pem" tunnel \
+        list --output="json" --id="${tunnel_uuid}" | jq -er '.[].name'
+}
+
 hasTunnel() {
     bashio::log.trace "${FUNCNAME[0]}:"
     bashio::log.info "Checking for existing tunnel..."
@@ -252,20 +317,25 @@ hasTunnel() {
 
     bashio::log.info "Existing tunnel with ID ${tunnel_uuid} found"
 
-    # Get tunnel name from Cloudflare API by tunnel id and chek if it matches config value
+    # Get tunnel name from Cloudflare API by tunnel id with exponential retry logic
     bashio::log.info "Checking if existing tunnel matches name given in config"
+
     local existing_tunnel_name
-    existing_tunnel_name=$(cloudflared --origincert="${data_path}/cert.pem" tunnel \
-        list --output="json" --id="${tunnel_uuid}" | jq -er '.[].name')
-    bashio::log.debug "Existing Cloudflare Tunnel name: $existing_tunnel_name"
+    if existing_tunnel_name=$(runWithRetry 4 2 "query Cloudflare API for tunnel name" _get_tunnel_name); then
+        bashio::log.debug "Existing Cloudflare Tunnel name: $existing_tunnel_name"
+    else
+        bashio::log.error "Could not verify tunnel name due to a persistent network or API error."
+        bashio::exit.nok
+    fi
+
     if [[ $tunnel_name != "$existing_tunnel_name" ]]; then
-        bashio::log.error "Existing Cloudflare Tunnel name does not match app (add-on) config."
+        bashio::log.error "Existing Cloudflare Tunnel name does not match app config."
         bashio::log.error "---------------------------------------"
-        bashio::log.error "App (Add-on) Configuration tunnel name: ${tunnel_name}"
+        bashio::log.error "App Configuration tunnel name: ${tunnel_name}"
         bashio::log.error "Tunnel credentials file tunnel name: ${existing_tunnel_name}"
         bashio::log.error "---------------------------------------"
-        bashio::log.error "Align app (add-on) configuration to match existing tunnel credential file"
-        bashio::log.error "or re-install the app (add-on)."
+        bashio::log.error "Align app configuration to match existing tunnel credential file"
+        bashio::log.error "or re-install the app."
         bashio::exit.nok
     fi
     bashio::log.info "Existing Cloudflare Tunnel name matches config, proceeding with existing tunnel file"
@@ -274,15 +344,17 @@ hasTunnel() {
 }
 
 # ------------------------------------------------------------------------------
-# Create Cloudflare Tunnel with name from HA-App/Add-On-Config
+# Create Cloudflare Tunnel with name from HA-App-Config
 # ------------------------------------------------------------------------------
 createTunnel() {
     bashio::log.trace "${FUNCNAME[0]}"
     bashio::log.info "Creating new tunnel..."
-    cloudflared --origincert="${data_path}/cert.pem" --cred-file="${data_path}/tunnel.json" tunnel --loglevel "${CLOUDFLARED_LOG}" create "${tunnel_name}" ||
-        bashio::exit.nok "Failed to create tunnel.
+
+    if ! runWithRetry 4 2 "create tunnel" cloudflared --origincert="${data_path}/cert.pem" --cred-file="${data_path}/tunnel.json" tunnel --loglevel "${CLOUDFLARED_LOG}" create "${tunnel_name}"; then
+        bashio::exit.nok "Failed to create tunnel after multiple attempts.
     Please check the Cloudflare Zero Trust Dashboard for an existing tunnel with the name ${tunnel_name} and delete it:
     Visit https://one.dash.cloudflare.com, then click on Networks -> Tunnels"
+    fi
 
     bashio::log.debug "Created new tunnel: $(cat "${data_path}"/tunnel.json)"
 
@@ -290,7 +362,7 @@ createTunnel() {
 }
 
 # ------------------------------------------------------------------------------
-# Create Cloudflare config with variables from HA-App/Add-on-Config
+# Create Cloudflare config with variables from HA-App-Config
 # ------------------------------------------------------------------------------
 createConfig() {
     local config
@@ -339,7 +411,7 @@ createConfig() {
     # Check if NGINX Proxy Manager is used to finalize configuration
     if bashio::config.true 'nginx_proxy_manager'; then
 
-        bashio::log.warning "Running with Nginxproxymanager support, make sure the app (add-on) is installed and running."
+        bashio::log.warning "Running with Nginxproxymanager support, make sure the app is installed and running."
         config=$(bashio::jq "${config}" ".\"ingress\" += [{\"service\": \"http://a0d7b954-nginxproxymanager:80\"}]")
     else
 
@@ -387,7 +459,8 @@ createDNS() {
     # Create DNS entry for external hostname of Home Assistant if 'external_hostname' is set
     if bashio::var.has_value "${external_hostname}"; then
         bashio::log.info "Creating DNS entry ${external_hostname}..."
-        cloudflared --origincert="${data_path}/cert.pem" tunnel --loglevel "${CLOUDFLARED_LOG}" route dns -f "${tunnel_uuid}" "${external_hostname}" ||
+        runWithRetry 4 2 "create DNS entry for ${external_hostname}" \
+            cloudflared --origincert="${data_path}/cert.pem" tunnel --loglevel "${CLOUDFLARED_LOG}" route dns -f "${tunnel_uuid}" "${external_hostname}" ||
             bashio::exit.nok "Failed to create DNS entry ${external_hostname}."
     fi
 
@@ -402,7 +475,8 @@ createDNS() {
 
         hostname=$(bashio::jq "${additional_host}" ".hostname")
         bashio::log.info "Creating DNS entry ${hostname}..."
-        cloudflared --origincert="${data_path}/cert.pem" tunnel --loglevel "${CLOUDFLARED_LOG}" route dns -f "${tunnel_uuid}" "${hostname}" ||
+        runWithRetry 4 2 "create DNS entry for ${hostname}" \
+            cloudflared --origincert="${data_path}/cert.pem" tunnel --loglevel "${CLOUDFLARED_LOG}" route dns -f "${tunnel_uuid}" "${hostname}" ||
             bashio::exit.nok "Failed to create DNS entry ${hostname}."
     done
 }
@@ -486,7 +560,7 @@ main() {
     # Run service with tunnel token without creating config
     if bashio::config.has_value 'tunnel_token'; then
         bashio::log.info "Using Cloudflare Remote Management Tunnel"
-        bashio::log.info "All app (add-on) configuration options except tunnel_token will be ignored."
+        bashio::log.info "All app configuration options except tunnel_token will be ignored."
         bashio::exit.ok
     fi
 
@@ -510,4 +584,7 @@ main() {
 
     bashio::log.info "Finished setting up the Cloudflare Tunnel"
 }
-main "$@"
+
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

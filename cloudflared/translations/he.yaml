@@ -35,7 +35,7 @@ configuration:
   nginx_proxy_manager:
     name: הפעלת Catch-All Nginx-Proxy-Manager
     description: >-
-      מגדיר את שירות catch-all להרחבה "Nginx-Proxy-Manager Community Add-ons".
+      מגדיר את שירות catch-all להרחבה "Nginx-Proxy-Manager Community App".
   use_builtin_proxy:
     name: השתמש ב-Caddy proxy המובנה
     description: >-
