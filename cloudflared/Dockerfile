@@ -14,7 +14,7 @@ ARG YQ_VERSION="4.53.3-r1"
 ARG CLOUDFLARED_VERSION="2026.9.3"
 
 # renovate: datasource=github-releases depName=caddy packageName=caddyserver/caddy
-ARG CADDY_VERSION="2.11.4"
+ARG CADDY_VERSION="2.11.7"
 
 # Copy root filesystem
 COPY rootfs /
