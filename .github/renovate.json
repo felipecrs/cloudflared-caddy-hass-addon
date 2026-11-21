@@ -1,7 +1,9 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "forkProcessing": "enabled",
-  "dependencyDashboard": true,
+  "dependencyDashboard": {
+    "enabled": true
+  },
   "labels": ["dependencies", "no-stale"],
   "commitMessagePrefix": "⬆️",
   "commitMessageTopic": "{{depName}}",
@@ -21,7 +23,9 @@
     },
     {
       "description": "The sync workflow is fork-only, so the upstream rebase never updates its actions.",
-      "matchPaths": [".github/workflows/sync-upstream\\.yaml"],
+      "matchFileNames": [
+        ".github/workflows/sync-upstream\\.yaml"
+      ],
       "enabled": true,
       "automerge": true
     }
