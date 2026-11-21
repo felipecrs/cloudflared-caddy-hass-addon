@@ -52,7 +52,9 @@ jobs:
       - name: 🚀 Run App Lint
         uses: homeassistant-apps/action-app-linter@v3.1.2
         with:
-          community: true
+          # community mode requires version: dev, but this repo is the
+          # add-on store itself and pins real versions in config.yaml
+          community: false
           path: "./${{ needs.information.outputs.target }}"
 
   lint-hadolint:

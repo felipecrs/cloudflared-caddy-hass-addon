@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "rebaseWhen": "behind-base-branch",
+  "forkProcessing": "enabled",
   "dependencyDashboard": true,
   "labels": ["dependencies", "no-stale"],
   "commitMessagePrefix": "⬆️",
@@ -8,24 +8,35 @@
   "extends": ["customManagers:dockerfileVersions"],
   "packageRules": [
     {
-      "groupName": "App base image",
-      "matchDatasources": ["docker"]
+      "description": "cloudflared, the base image and the upstream workflows are updated by the sync-upstream rebase, not by Renovate.",
+      "matchPackageNames": ["*"],
+      "enabled": false
     },
     {
-      "groupName": "App base image",
-      "matchDatasources": ["docker"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "description": "Caddy: Dockerfile ARG (via the dockerfileVersions preset) and the add-on version suffix.",
+      "matchPackageNames": ["caddy", "caddyserver/caddy"],
+      "enabled": true,
+      "groupName": "caddy",
       "automerge": true
     },
     {
-      "matchDatasources": ["github-releases"],
-      "matchUpdateTypes": ["minor", "patch"],
+      "description": "The sync workflow is fork-only, so the upstream rebase never updates its actions.",
+      "matchPaths": [".github/workflows/sync-upstream\\.yaml"],
+      "enabled": true,
       "automerge": true
-    },
+    }
+  ],
+  "customManagers": [
     {
-      "matchManagers": ["github-actions"],
-      "matchUpdateTypes": ["minor", "patch"],
-      "automerge": true
+      "customType": "regex",
+      "managerFilePatterns": ["/^cloudflared\\/config\\.yaml$/"],
+      "matchStrings": [
+        "version: \\S+-caddy\\.(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "depNameTemplate": "caddy",
+      "packageNameTemplate": "caddyserver/caddy",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v(?<version>.+)$"
     }
   ]
 }
