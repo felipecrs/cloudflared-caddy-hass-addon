@@ -2,6 +2,8 @@ FROM ghcr.io/hassio-addons/base:21.0.11
 
 # Set S6 verbosity level
 ENV S6_VERBOSITY="1"
+# Enable Caddy service only if enabled in config
+ENV S6_STAGE2_HOOK="/etc/s6-overlay/s6-rc.d/caddy/condition_caddy.sh"
 
 # Setup base
 ARG BUILD_ARCH="amd64"
@@ -10,6 +12,9 @@ ARG BUILD_ARCH="amd64"
 ARG YQ_VERSION="4.53.3-r2"
 # renovate: datasource=github-releases depName=cloudflared packageName=cloudflare/cloudflared versioning=loose
 ARG CLOUDFLARED_VERSION="2026.11.1"
+
+# renovate: datasource=github-releases depName=caddy packageName=caddyserver/caddy
+ARG CADDY_VERSION="2.11.9"
 
 # Copy root filesystem
 COPY rootfs /
