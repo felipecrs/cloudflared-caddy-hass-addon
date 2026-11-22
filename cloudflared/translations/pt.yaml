@@ -37,6 +37,14 @@ configuration:
     name: Activar serviço Catch-All do Nginx-Proxy-Manager
     description: >-
       Define o serviço Catch-All da app como "Nginx-Proxy-Manager Community App".
+  use_builtin_proxy:
+    name: Utilizar o proxy Caddy incorporado
+    description: >-
+      A ligação ao Home Assistant e aos servidores adicionais será feita
+      através do proxy Caddy incorporado. Isto permite um acesso unificado
+      ao Home Assistant e aos servidores adicionais mesmo dentro da sua rede
+      local. Consulte a documentação para mais detalhes.
+      Esta opção está desativada por defeito.
   tunnel_token:
     name: Token do túnel Cloudflare
     description: >-

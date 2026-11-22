@@ -1,0 +1,64 @@
+---
+name: Sync upstream
+
+# yamllint disable-line rule:truthy
+on:
+  schedule:
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+
+jobs:
+  sync:
+    name: Rebase onto the latest upstream release
+    runs-on: ubuntu-latest
+    steps:
+      - name: ⤵️ Check out code from GitHub
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          # The default GITHUB_TOKEN cannot push workflow file updates
+          token: ${{ secrets.SYNC_TOKEN }}
+      - name: 🔄 Rebase onto the latest upstream release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+
+          tag=$(gh release view \
+            -R homeassistant-apps/app-cloudflared --json tagName -q .tagName)
+          git fetch https://github.com/homeassistant-apps/app-cloudflared tag "$tag"
+
+          if git merge-base --is-ancestor "$tag" HEAD; then
+            echo "Already on the latest upstream release."
+            exit 0
+          fi
+
+          git config user.name "GitHub Actions"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Merge and squash back into a single commit on top of the release,
+          # so conflicts only ever need to be resolved once. If the merge
+          # conflicts, this job fails and GitHub sends a failure email;
+          # resolve it locally and run `git push --force-with-lease`.
+          git merge --no-edit "$tag"
+          git reset --soft "$tag"
+
+          # Keep the add-on version pinned to the upstream release + Caddy.
+          caddy=$(sed -n 's/^ARG CADDY_VERSION="\(.*\)"/\1/p' \
+            cloudflared/Dockerfile)
+          sed -i "s/^version: .*/version: ${tag#v}-caddy.$caddy/" \
+            cloudflared/config.yaml
+
+          git commit -am "Rebase Cloudflared Caddy onto $tag"
+
+          # Verify before going live.
+          bash ./cloudflared/tests/test_config_and_set_vars.sh
+          docker build --build-arg BUILD_ARCH=amd64 cloudflared
+
+          git push --force-with-lease
