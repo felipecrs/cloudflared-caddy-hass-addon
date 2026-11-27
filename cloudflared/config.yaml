@@ -1,13 +1,13 @@
 ---
-name: Cloudflared
-version: dev
+name: Cloudflared Caddy
+version: 7.0.23-caddy.2.11.9
 breaking_versions:
   - 5.3.7
   - 6.0.0
 slug: cloudflared
 description: "Use a Cloudflare Tunnel to remotely
   connect to Home Assistant without opening any ports"
-url: "https://github.com/homeassistant-apps/app-cloudflared"
+url: "https://github.com/felipecrs/cloudflared-caddy-homeassistant-app/"
 startup: services
 init: false
 hassio_api: true
@@ -24,15 +24,23 @@ options:
   additional_hosts: []
 ports:
   36500/tcp: null
+  80/tcp: null
+  443/tcp: null
+  443/udp: null
+privileged:
+  # https://hub.docker.com/_/caddy#linux-capabilities:~:text=caddy_container_id%20caddy%20reload-,Linux%20capabilities,-Caddy%20ships%20with
+  - NET_ADMIN
 schema:
   external_hostname: str?
   additional_hosts:
     - hostname: str
       service: str
       disableChunkedEncoding: bool?
+      internalOnly: bool?
   tunnel_name: str?
   catch_all_service: str?
   nginx_proxy_manager: bool?
+  use_builtin_proxy: bool?
   tunnel_token: str?
   post_quantum: bool?
   run_parameters:
